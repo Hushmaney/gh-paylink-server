@@ -1,101 +1,76 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const mongoose = require("mongoose");
-const dotenv = require("dotenv");
-const crypto = require("crypto");
-const axios = require("axios");
+const express = require('express');
+const bodyParser = require('body-parser');
+const mongoose = require('mongoose');
+const crypto = require('crypto');
+const dotenv = require('dotenv');
+const nodemailer = require('nodemailer');
+const axios = require('axios');
+const cors = require('cors'); // Added CORS
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Enable CORS for all origins
+app.use(cors());
 app.use(bodyParser.json());
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => console.log("MongoDB connected"))
-.catch(err => console.log(err));
+mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log("MongoDB connected"))
+    .catch(err => console.log(err));
 
-/**
- * ROOT ROUTE
- */
-app.get("/", (req, res) => {
-    res.send("gh-paylink backend running!");
-});
-
-/**
- * PAYMENT ROUTE
- * Creates a payment link via Flutterwave API
- */
-app.post("/api/pay", async (req, res) => {
-    const { name, email, amount } = req.body;
-
-    if (!name || !email || !amount) {
-        return res.status(400).json({ error: "Missing required fields" });
-    }
-
+// Payment Route
+app.post('/api/pay', async (req, res) => {
     try {
-        const flwResponse = await axios.post(
-            "https://api.flutterwave.com/v3/payments",
+        const { name, email, amount } = req.body;
+
+        if (!name || !email || !amount) {
+            return res.status(400).json({ message: 'All fields are required' });
+        }
+
+        const response = await axios.post(
+            'https://api.flutterwave.com/v3/payments',
             {
-                tx_ref: "ghpaylink-" + Date.now(),
+                tx_ref: Date.now().toString(),
                 amount,
-                currency: "GHS",
-                redirect_url: "https://your-frontend-url.netlify.app/success.html",
-                customer: {
-                    email,
-                    name
-                },
+                currency: 'GHS',
+                redirect_url: 'https://unrivaled-granita-5b2b9b.netlify.app/success.html',
+                customer: { email, name },
                 customizations: {
-                    title: "GH Paylink Payment",
-                    description: "Payment via GH Paylink"
-                }
+                    title: 'GH Paylink',
+                    description: 'Payment for services',
+                },
             },
             {
                 headers: {
                     Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-                    "Content-Type": "application/json"
-                }
+                    'Content-Type': 'application/json',
+                },
             }
         );
 
-        const link = flwResponse.data?.data?.link;
-        if (!link) {
-            return res.status(500).json({ error: "No payment link returned" });
-        }
+        res.json(response.data);
 
-        res.json({ link });
-    } catch (err) {
-        console.error(err.response?.data || err.message);
-        res.status(500).json({ error: "Payment initiation failed" });
+    } catch (error) {
+        console.error(error.response?.data || error.message);
+        res.status(500).json({ message: 'Payment initiation failed' });
     }
 });
 
-/**
- * WEBHOOK ROUTE
- * Handles payment notifications from Flutterwave
- */
-app.post("/webhook", (req, res) => {
+// Webhook Route
+app.post('/webhook', (req, res) => {
     const secretHash = process.env.FLW_SECRET_HASH;
-    const signature = req.headers["verif-hash"];
+    const signature = req.headers['verif-hash'];
 
     if (!signature || signature !== secretHash) {
-        return res.status(401).json({ error: "Invalid signature" });
+        return res.status(401).send('Invalid signature');
     }
 
-    const event = req.body;
-    console.log("Webhook received:", event);
+    console.log('Webhook data:', req.body);
 
-    // TODO: Process the payment event here (save to DB, update status, etc.)
-
-    res.status(200).send("Webhook received successfully");
+    res.status(200).send('Webhook received');
 });
 
-// START SERVER
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
