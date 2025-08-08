@@ -5,21 +5,27 @@ const crypto = require('crypto');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const axios = require('axios');
-const cors = require('cors'); // Added CORS
+const cors = require('cors');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS for all origins
+// Debug check for Flutterwave secret key
+if (!process.env.FLW_SECRET_KEY) {
+    console.error("❌ ERROR: FLW_SECRET_KEY is missing from environment variables.");
+} else {
+    console.log("✅ FLW_SECRET_KEY loaded successfully.");
+}
+
 app.use(cors());
 app.use(bodyParser.json());
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log("MongoDB connected"))
-    .catch(err => console.log(err));
+    .catch(err => console.error("MongoDB connection error:", err));
 
 // Payment Route
 app.post('/api/pay', async (req, res) => {
@@ -29,6 +35,8 @@ app.post('/api/pay', async (req, res) => {
         if (!name || !email || !amount) {
             return res.status(400).json({ message: 'All fields are required' });
         }
+
+        console.log(`🔹 Initiating payment for ${name} (${email}), amount: ${amount}`);
 
         const response = await axios.post(
             'https://api.flutterwave.com/v3/payments',
@@ -54,7 +62,7 @@ app.post('/api/pay', async (req, res) => {
         res.json(response.data);
 
     } catch (error) {
-        console.error(error.response?.data || error.message);
+        console.error("❌ Payment initiation failed:", error.response?.data || error.message);
         res.status(500).json({ message: 'Payment initiation failed' });
     }
 });
@@ -65,10 +73,11 @@ app.post('/webhook', (req, res) => {
     const signature = req.headers['verif-hash'];
 
     if (!signature || signature !== secretHash) {
+        console.warn("⚠️ Invalid webhook signature");
         return res.status(401).send('Invalid signature');
     }
 
-    console.log('Webhook data:', req.body);
+    console.log('✅ Webhook data received:', req.body);
 
     res.status(200).send('Webhook received');
 });
