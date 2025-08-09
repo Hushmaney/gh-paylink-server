@@ -21,7 +21,7 @@ if (!process.env.FLW_SECRET_KEY) {
 app.use(cors());
 app.use(bodyParser.json());
 
-// MongoDB Connection
+// Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log("MongoDB connected"))
     .catch(err => console.error("MongoDB connection error:", err));
@@ -33,7 +33,6 @@ const transactionSchema = new mongoose.Schema({
     amount: Number,
     currency: String,
     status: String,
-    payment_type: String,
     customer: {
         name: String,
         email: String,
@@ -41,12 +40,14 @@ const transactionSchema = new mongoose.Schema({
     },
     created_at: { type: Date, default: Date.now }
 });
+
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
 // Payment Route
 app.post('/api/pay', async (req, res) => {
     try {
         const { name, email, amount } = req.body;
+
         if (!name || !email || !amount) {
             return res.status(400).json({ message: 'All fields are required' });
         }
@@ -56,7 +57,7 @@ app.post('/api/pay', async (req, res) => {
         const response = await axios.post(
             'https://api.flutterwave.com/v3/payments',
             {
-                tx_ref: Date.now().toString(),
+                tx_ref: `ghpaylink-${Date.now()}`,
                 amount,
                 currency: 'GHS',
                 redirect_url: 'https://unrivaled-granita-5b2b9b.netlify.app/success.html',
@@ -75,6 +76,7 @@ app.post('/api/pay', async (req, res) => {
         );
 
         res.json(response.data);
+
     } catch (error) {
         console.error("❌ Payment initiation failed:", error.response?.data || error.message);
         res.status(500).json({ message: 'Payment initiation failed' });
@@ -91,42 +93,47 @@ app.post('/webhook', async (req, res) => {
         return res.status(401).send('Invalid signature');
     }
 
+    const data = req.body.data;
     console.log('✅ Webhook data received:', req.body);
 
     try {
-        const { tx_ref, flw_ref, amount, currency, status, payment_type, customer } = req.body.data;
+        // ✅ Check if transaction already exists
+        const existingTx = await Transaction.findOne({ tx_ref: data.tx_ref });
+        if (existingTx) {
+            console.log(`⚠️ Duplicate transaction ignored: ${data.tx_ref}`);
+        } else {
+            // Save only if not already in DB
+            const newTransaction = new Transaction({
+                tx_ref: data.tx_ref,
+                flw_ref: data.flw_ref,
+                amount: data.amount,
+                currency: data.currency,
+                status: data.status,
+                customer: {
+                    name: data.customer.name,
+                    email: data.customer.email,
+                    phone_number: data.customer.phone_number
+                },
+                created_at: new Date(data.created_at)
+            });
 
-        const newTransaction = new Transaction({
-            tx_ref,
-            flw_ref,
-            amount,
-            currency,
-            status,
-            payment_type,
-            customer: {
-                name: customer.name,
-                email: customer.email,
-                phone_number: customer.phone_number
-            }
-        });
-
-        await newTransaction.save();
-        console.log(`✅ Transaction saved: ${newTransaction._id}`);
+            await newTransaction.save();
+            console.log("✅ Transaction saved:", newTransaction._id);
+        }
     } catch (err) {
-        console.error("❌ Error saving transaction:", err);
+        console.error("❌ Error saving transaction:", err.message);
     }
 
     res.status(200).send('Webhook received');
 });
 
-// Fetch all transactions
+// Admin route to fetch transactions
 app.get('/api/transactions', async (req, res) => {
     try {
         const transactions = await Transaction.find().sort({ created_at: -1 });
         res.json(transactions);
     } catch (err) {
-        console.error("❌ Error fetching transactions:", err);
-        res.status(500).json({ message: 'Error fetching transactions' });
+        res.status(500).json({ message: 'Failed to fetch transactions' });
     }
 });
 
